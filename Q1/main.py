@@ -9,6 +9,10 @@ import uuid
 from collections import deque
 from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 
+from collections import defaultdict, deque
+import time
+import uuid
+
 import re
 from pydantic import BaseModel
 
@@ -17,6 +21,15 @@ app = FastAPI()
 # ==================================================
 # GLOBALS
 # ==================================================
+
+
+TOTAL_ORDERS = 51
+RATE_LIMIT = 19
+WINDOW_SECONDS = 10
+
+idempotency_store = {}
+client_requests = defaultdict(deque)
+
 
 START_TIME = time.time()
 
@@ -58,6 +71,39 @@ async def log_requests(request, call_next):
     response.headers["X-Request-ID"] = request_id
 
     return response
+
+@app.middleware("http")
+async def q9_rate_limit(request, call_next):
+
+    if request.url.path.startswith("/orders"):
+
+        client_id = request.headers.get("X-Client-Id")
+
+        if client_id:
+            now = time.time()
+            bucket = client_requests[client_id]
+
+            while bucket and now - bucket[0] > WINDOW_SECONDS:
+                bucket.popleft()
+
+            if len(bucket) >= RATE_LIMIT:
+
+                retry_after = max(
+                    1,
+                    int(WINDOW_SECONDS - (now - bucket[0]))
+                )
+
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded"},
+                    headers={
+                        "Retry-After": str(retry_after)
+                    }
+                )
+
+            bucket.append(now)
+
+    return await call_next(request)
 
 # ==================================================
 # QUESTION 2 - JWT VERIFY
@@ -366,3 +412,63 @@ async def extract_invoice(data: ExtractRequest):
         currency=currency,
         date=date
     )
+
+
+# ==================================================
+# QUESTION 9 - ORDERS API
+# ==================================================
+
+@app.post("/orders", status_code=201)
+async def create_order(
+    order: dict,
+    idempotency_key: str = Header(None)
+):
+
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Idempotency-Key required"
+        )
+
+    if idempotency_key in idempotency_store:
+      return JSONResponse(
+        status_code=200,
+        content=idempotency_store[idempotency_key]
+    )
+
+    created_order = {
+        "id": str(uuid.uuid4())
+    }
+
+    idempotency_store[idempotency_key] = created_order
+
+    return created_order
+
+
+@app.get("/orders")
+async def list_orders(
+    limit: int = 10,
+    cursor: str = None
+):
+
+    start = int(cursor) if cursor else 1
+
+    end = min(
+        start + limit - 1,
+        TOTAL_ORDERS
+    )
+
+    items = [
+        {"id": i}
+        for i in range(start, end + 1)
+    ]
+
+    next_cursor = None
+
+    if end < TOTAL_ORDERS:
+        next_cursor = str(end + 1)
+
+    return {
+        "items": items,
+        "next_cursor": next_cursor
+    }
