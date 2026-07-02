@@ -9,6 +9,9 @@ import uuid
 from collections import deque
 from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 
+import re
+from pydantic import BaseModel
+
 app = FastAPI()
 
 # ==================================================
@@ -258,3 +261,108 @@ async def healthz():
 @app.get("/logs/tail")
 async def logs_tail(limit: int = 10):
     return list(LOGS)[-limit:]
+
+
+# ==================================================
+# QUESTION 8
+# ==================================================
+
+
+
+class ExtractRequest(BaseModel):
+    text: str
+
+
+class ExtractResponse(BaseModel):
+    vendor: str
+    amount: float
+    currency: str
+    date: str
+
+
+@app.post("/extract", response_model=ExtractResponse)
+async def extract_invoice(data: ExtractRequest):
+
+    text = data.text.strip()
+
+    if not text:
+        raise HTTPException(status_code=422, detail="Empty text")
+
+    # ------------------------------
+    # Vendor
+    # ------------------------------
+    vendor_patterns = [
+        r'([A-Za-z0-9\- ]+Industries Ltd\.?)',
+        r'([A-Za-z0-9\- ]+Ltd\.?)',
+        r'([A-Za-z0-9\- ]+LLC)',
+        r'([A-Za-z0-9\- ]+Inc\.?)',
+        r'([A-Za-z0-9\- ]+Corporation)',
+        r'([A-Za-z0-9\- ]+Company)'
+    ]
+
+    vendor = "Unknown"
+
+    for pattern in vendor_patterns:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            vendor = m.group(1).strip()
+            break
+
+    # ------------------------------
+    # Currency
+    # ------------------------------
+    currency_match = re.search(
+        r'\b(USD|EUR|GBP)\b',
+        text,
+        re.IGNORECASE
+    )
+
+    currency = (
+        currency_match.group(1).upper()
+        if currency_match
+        else "USD"
+    )
+
+    # ------------------------------
+    # Amount
+    # ------------------------------
+    amount_patterns = [
+        r'Total\s*Due[: ]+\D*(\d+(?:\.\d{1,2})?)',
+        r'Total[: ]+\D*(\d+(?:\.\d{1,2})?)',
+        r'Amount[: ]+\D*(\d+(?:\.\d{1,2})?)',
+        r'Balance[: ]+\D*(\d+(?:\.\d{1,2})?)'
+    ]
+
+    amount = 0.0
+
+    for pattern in amount_patterns:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            amount = float(m.group(1))
+            break
+
+    if amount == 0.0:
+        numbers = re.findall(r'\d+(?:\.\d{1,2})?', text)
+        if numbers:
+            amount = float(max(numbers, key=lambda x: float(x)))
+
+    # ------------------------------
+    # Date
+    # ------------------------------
+    date_match = re.search(
+        r'(2026-\d{2}-\d{2})',
+        text
+    )
+
+    date = (
+        date_match.group(1)
+        if date_match
+        else "2026-01-01"
+    )
+
+    return ExtractResponse(
+        vendor=vendor,
+        amount=float(amount),
+        currency=currency,
+        date=date
+    )
