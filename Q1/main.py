@@ -181,6 +181,6 @@ async def analytics(
         "email": "23f3000872@ds.study.iitm.ac.in",
         "total_events": total_events,
         "unique_users": unique_users,
-        "revenue": revenue,
+        "revenue": float(revenue),
         "top_user": top_user
     }
