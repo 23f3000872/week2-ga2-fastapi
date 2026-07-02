@@ -1,12 +1,13 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List
 import jwt
-from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,9 +16,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =========================
+# ==================================================
 # QUESTION 2 - JWT VERIFY
-# =========================
+# ==================================================
 
 PUBLIC_KEY = """
 -----BEGIN PUBLIC KEY-----
@@ -63,10 +64,9 @@ async def verify_token(data: TokenRequest):
             content={"valid": False}
         )
 
-
-# =========================
+# ==================================================
 # QUESTION 3 - CONFIG MERGE
-# =========================
+# ==================================================
 
 def parse_bool(value):
     return str(value).lower() in ["true", "1", "yes", "on"]
@@ -75,7 +75,6 @@ def parse_bool(value):
 @app.get("/effective-config")
 async def effective_config(set: List[str] = Query(default=[])):
 
-    # Layer 1: defaults
     config = {
         "port": 8000,
         "workers": 1,
@@ -84,28 +83,28 @@ async def effective_config(set: List[str] = Query(default=[])):
         "api_key": "default-secret-000"
     }
 
-    # Layer 2: config.development.yaml
+    # config.development.yaml
     config.update({
         "port": 8187,
         "log_level": "error"
     })
 
-    # Layer 3: .env
+    # .env
     config.update({
         "port": 8777,
-        "workers": 9,  # NUM_WORKERS alias
+        "workers": 9,
         "log_level": "debug",
         "api_key": "key-ewphic93z5"
     })
 
-    # Layer 4: OS env vars (APP_*)
+    # OS env
     config.update({
         "workers": 15,
         "log_level": "debug",
         "api_key": "key-bu5rrokggp"
     })
 
-    # Layer 5: CLI overrides
+    # CLI overrides
     for item in set:
         if "=" not in item:
             continue
@@ -121,13 +120,67 @@ async def effective_config(set: List[str] = Query(default=[])):
         else:
             config[key] = value
 
-    # enforce types
     config["port"] = int(config["port"])
     config["workers"] = int(config["workers"])
     config["debug"] = bool(config["debug"])
     config["log_level"] = str(config["log_level"])
 
-    # mask secret
     config["api_key"] = "****"
 
     return config
+
+# ==================================================
+# QUESTION 5 - ANALYTICS
+# ==================================================
+
+API_KEY = "ak_341wglxot8ycrxlm4hcmqxs8"
+
+
+class Event(BaseModel):
+    user: str
+    amount: float
+    ts: int
+
+
+class AnalyticsRequest(BaseModel):
+    events: List[Event]
+
+
+@app.post("/analytics")
+async def analytics(
+    data: AnalyticsRequest,
+    x_api_key: str = Header(None)
+):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    events = data.events
+
+    total_events = len(events)
+
+    unique_users = len(set(event.user for event in events))
+
+    revenue = sum(
+        event.amount
+        for event in events
+        if event.amount > 0
+    )
+
+    user_totals = {}
+
+    for event in events:
+        if event.amount > 0:
+            user_totals[event.user] = (
+                user_totals.get(event.user, 0)
+                + event.amount
+            )
+
+    top_user = max(user_totals, key=user_totals.get) if user_totals else ""
+
+    return {
+        "email": "23f3000872@ds.study.iitm.ac.in",
+        "total_events": total_events,
+        "unique_users": unique_users,
+        "revenue": revenue,
+        "top_user": top_user
+    }
