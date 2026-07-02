@@ -75,6 +75,10 @@ async def log_requests(request, call_next):
 @app.middleware("http")
 async def q9_rate_limit(request, call_next):
 
+    # Never rate-limit CORS preflight
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     if request.url.path.startswith("/orders"):
 
         client_id = request.headers.get("X-Client-Id")
@@ -96,9 +100,7 @@ async def q9_rate_limit(request, call_next):
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "Rate limit exceeded"},
-                    headers={
-                        "Retry-After": str(retry_after)
-                    }
+                    headers={"Retry-After": str(retry_after)}
                 )
 
             bucket.append(now)
