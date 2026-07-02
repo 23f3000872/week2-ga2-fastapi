@@ -1,11 +1,28 @@
-from fastapi import FastAPI, Query, Header, HTTPException
+from fastapi import FastAPI, Query, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List
 import jwt
+import time
+import uuid
+from collections import deque
+from prometheus_client import Counter, generate_latest, CONTENT_TYPE_LATEST
 
 app = FastAPI()
+
+# ==================================================
+# GLOBALS
+# ==================================================
+
+START_TIME = time.time()
+
+REQUEST_COUNTER = Counter(
+    "http_requests_total",
+    "Total HTTP requests"
+)
+
+LOGS = deque(maxlen=1000)
 
 # CORS
 app.add_middleware(
@@ -15,6 +32,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==================================================
+# LOGGING + METRICS MIDDLEWARE
+# ==================================================
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    request_id = str(uuid.uuid4())
+
+    response = await call_next(request)
+
+    REQUEST_COUNTER.inc()
+
+    LOGS.append({
+        "level": "INFO",
+        "ts": time.time(),
+        "path": request.url.path,
+        "request_id": request_id
+    })
+
+    response.headers["X-Request-ID"] = request_id
+
+    return response
 
 # ==================================================
 # QUESTION 2 - JWT VERIFY
@@ -83,13 +123,11 @@ async def effective_config(set: List[str] = Query(default=[])):
         "api_key": "default-secret-000"
     }
 
-    # config.development.yaml
     config.update({
         "port": 8187,
         "log_level": "error"
     })
 
-    # .env
     config.update({
         "port": 8777,
         "workers": 9,
@@ -97,14 +135,12 @@ async def effective_config(set: List[str] = Query(default=[])):
         "api_key": "key-ewphic93z5"
     })
 
-    # OS env
     config.update({
         "workers": 15,
         "log_level": "debug",
         "api_key": "key-bu5rrokggp"
     })
 
-    # CLI overrides
     for item in set:
         if "=" not in item:
             continue
@@ -154,28 +190,31 @@ async def analytics(
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    events = data.events
+    total_events = len(data.events)
 
-    total_events = len(events)
-
-    unique_users = len(set(event.user for event in events))
+    unique_users = len(
+        set(event.user for event in data.events)
+    )
 
     revenue = sum(
         event.amount
-        for event in events
+        for event in data.events
         if event.amount > 0
     )
 
     user_totals = {}
 
-    for event in events:
+    for event in data.events:
         if event.amount > 0:
             user_totals[event.user] = (
                 user_totals.get(event.user, 0)
                 + event.amount
             )
 
-    top_user = max(user_totals, key=user_totals.get) if user_totals else ""
+    top_user = (
+        max(user_totals, key=user_totals.get)
+        if user_totals else ""
+    )
 
     return {
         "email": "23f3000872@ds.study.iitm.ac.in",
@@ -184,3 +223,38 @@ async def analytics(
         "revenue": float(revenue),
         "top_user": top_user
     }
+
+# ==================================================
+# QUESTION 6 - OBSERVABILITY
+# ==================================================
+
+@app.get("/work")
+async def work(n: int = 1):
+    for _ in range(max(0, n)):
+        pass
+
+    return {
+        "email": "23f3000872@ds.study.iitm.ac.in",
+        "done": n
+    }
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
+    )
+
+
+@app.get("/healthz")
+async def healthz():
+    return {
+        "status": "ok",
+        "uptime_s": float(time.time() - START_TIME)
+    }
+
+
+@app.get("/logs/tail")
+async def logs_tail(limit: int = 10):
+    return list(LOGS)[-limit:]
