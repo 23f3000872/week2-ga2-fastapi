@@ -20,6 +20,7 @@ ALLOWED_ORIGINS = [
     "https://app-2wr2p2.example.com",
     "https://exam.sanand.workers.dev",
     "https://tds.s-anand.net",
+    "https://courses.iitm.ac.in"
 ]
 
 app.add_middleware(
@@ -28,6 +29,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"]
 )
 
 # =====================================
@@ -43,9 +45,9 @@ client_buckets = defaultdict(deque)
 @app.middleware("http")
 async def request_context(request: Request, call_next):
 
-    request_id = request.headers.get("x-request-id")
+    request_id = request.headers.get("X-Request-ID")
 
-    if not request_id:
+    if request_id is None:
         request_id = str(uuid.uuid4())
 
     request.state.request_id = request_id
@@ -69,7 +71,6 @@ async def rate_limiter(request: Request, call_next):
     client_id = request.headers.get("X-Client-Id")
 
     if client_id:
-
         now = time.time()
         bucket = client_buckets[client_id]
 
@@ -101,14 +102,16 @@ async def ping_options():
 @app.get("/ping")
 async def ping(request: Request):
 
+    request_id = request.state.request_id
+
     response = JSONResponse(
         content={
             "email": EMAIL,
-            "request_id": request.state.request_id
+            "request_id": request_id
         }
     )
 
-    response.headers["X-Request-ID"] = request.state.request_id
+    response.headers["X-Request-ID"] = request_id
 
     return response
 
