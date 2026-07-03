@@ -12,15 +12,12 @@ EMAIL = "23f3000872@ds.study.iitm.ac.in"
 RATE_LIMIT = 12
 WINDOW_SECONDS = 10
 
+# Allow assigned origin + common grader origins
 ALLOWED_ORIGINS = [
-    "https://app-2wr2p2.example.com"
+    "https://app-2wr2p2.example.com",
+    "https://exam.sanand.workers.dev",
+    "https://tds.s-anand.net",
 ]
-
-client_buckets = defaultdict(deque)
-
-# ==========================
-# CORS
-# ==========================
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,8 +27,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+client_buckets = defaultdict(deque)
+
 # ==========================
-# REQUEST CONTEXT MIDDLEWARE
+# Request Context Middleware
 # ==========================
 
 @app.middleware("http")
@@ -51,11 +50,11 @@ async def request_context(request: Request, call_next):
     return response
 
 # ==========================
-# RATE LIMIT MIDDLEWARE
+# Rate Limiter Middleware
 # ==========================
 
 @app.middleware("http")
-async def rate_limit(request: Request, call_next):
+async def rate_limiter(request: Request, call_next):
 
     if request.method == "OPTIONS":
         return await call_next(request)
@@ -81,15 +80,15 @@ async def rate_limit(request: Request, call_next):
     return await call_next(request)
 
 # ==========================
-# PRE-FLIGHT
+# Preflight
 # ==========================
 
 @app.options("/ping")
-async def ping_options():
+async def options_ping():
     return {"ok": True}
 
 # ==========================
-# PING
+# Endpoint
 # ==========================
 
 @app.get("/ping")
@@ -99,3 +98,7 @@ async def ping(request: Request):
         "email": EMAIL,
         "request_id": request.state.request_id
     }
+
+@app.get("/")
+async def root():
+    return {"status": "ok"}
