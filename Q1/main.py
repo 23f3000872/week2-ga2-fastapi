@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from collections import defaultdict, deque
@@ -16,18 +16,16 @@ WINDOW_SECONDS = 10
 # CORS
 # =====================================
 
-ALLOWED_ORIGINS = [
-    "https://app-2wr2p2.example.com",
-    "https://exam.sanand.workers.dev",
-    "https://tds.s-anand.net",
-    "https://courses.iitm.ac.in"
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,
-    allow_methods=["GET", "OPTIONS"],
+    allow_origins=[
+        "https://app-2wr2p2.example.com",
+        "https://tds.s-anand.net",
+        "https://exam.sanand.workers.dev",
+        "https://courses.iitm.ac.in"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-Request-ID"]
 )
@@ -47,7 +45,7 @@ async def request_context(request: Request, call_next):
 
     request_id = request.headers.get("X-Request-ID")
 
-    if request_id is None:
+    if not request_id:
         request_id = str(uuid.uuid4())
 
     request.state.request_id = request_id
@@ -93,7 +91,7 @@ async def rate_limiter(request: Request, call_next):
 
 @app.options("/ping")
 async def ping_options():
-    return {"ok": True}
+    return Response(status_code=200)
 
 # =====================================
 # GET /ping
