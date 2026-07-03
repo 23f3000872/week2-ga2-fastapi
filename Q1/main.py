@@ -12,58 +12,85 @@ TOTAL_ORDERS = 51
 RATE_LIMIT = 19
 WINDOW_SECONDS = 10
 
+# ==========================
 # CORS
+# ==========================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"]
 )
 
-# Storage
+# ==========================
+# STORAGE
+# ==========================
+
 idempotency_store = {}
 client_buckets = defaultdict(deque)
 
-# Rate Limiting Middleware
+# ==========================
+# RATE LIMITING
+# ==========================
+
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
 
+    # Allow browser preflight requests
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    client_id = request.headers.get("X-Client-Id")
+    # Only rate limit /orders endpoints
+    if request.url.path.startswith("/orders"):
 
-    if client_id:
-        now = time.time()
-        bucket = client_buckets[client_id]
+        client_id = request.headers.get("X-Client-Id")
 
-        while bucket and now - bucket[0] > WINDOW_SECONDS:
-            bucket.popleft()
+        if client_id:
+            now = time.time()
+            bucket = client_buckets[client_id]
 
-        if len(bucket) >= RATE_LIMIT:
-            retry_after = max(
-                1,
-                int(WINDOW_SECONDS - (now - bucket[0]))
-            )
+            while bucket and now - bucket[0] > WINDOW_SECONDS:
+                bucket.popleft()
 
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "Rate limit exceeded"},
-                headers={"Retry-After": str(retry_after)}
-            )
+            if len(bucket) >= RATE_LIMIT:
+                retry_after = max(
+                    1,
+                    int(WINDOW_SECONDS - (now - bucket[0]))
+                )
 
-        bucket.append(now)
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded"},
+                    headers={"Retry-After": str(retry_after)}
+                )
+
+            bucket.append(now)
 
     return await call_next(request)
 
+# ==========================
+# ROOT
+# ==========================
 
 @app.get("/")
 def home():
     return {"status": "ok"}
 
+# ==========================
+# PRE-FLIGHT
+# ==========================
 
-# 1. Idempotent Order Creation
+@app.options("/orders")
+async def options_orders():
+    return {"ok": True}
+
+# ==========================
+# IDEMPOTENT ORDER CREATION
+# ==========================
+
 @app.post("/orders", status_code=201)
 def create_order(
     idempotency_key: Optional[str] = Header(
@@ -89,22 +116,27 @@ def create_order(
 
     return order
 
+# ==========================
+# CURSOR PAGINATION
+# ==========================
 
-# 2. Cursor Pagination
 @app.get("/orders")
 def list_orders(
     limit: int = 10,
     cursor: Optional[str] = None
 ):
 
-    start = int(cursor) if cursor else 1
+    try:
+        start = int(cursor) if cursor else 1
+    except ValueError:
+        start = 1
+
+    if start < 1:
+        start = 1
 
     end = min(start + limit - 1, TOTAL_ORDERS)
 
-    items = [
-        {"id": i}
-        for i in range(start, end + 1)
-    ]
+    items = [{"id": i} for i in range(start, end + 1)]
 
     next_cursor = (
         str(end + 1)
