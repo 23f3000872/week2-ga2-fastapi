@@ -20,7 +20,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["Retry-After"]
 )
@@ -148,3 +148,7 @@ def list_orders(
         "items": items,
         "next_cursor": next_cursor
     }
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
