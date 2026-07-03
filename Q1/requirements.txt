@@ -1,5 +1,2 @@
 fastapi
 uvicorn
-pyjwt
-cryptography
-prometheus-client

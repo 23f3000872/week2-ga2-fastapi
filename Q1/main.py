@@ -1,16 +1,22 @@
-from fastapi import FastAPI, Header, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from collections import defaultdict, deque
-from typing import Optional
 import uuid
 import time
 
 app = FastAPI()
 
-TOTAL_ORDERS = 51
-RATE_LIMIT = 19
+EMAIL = "23f3000872@ds.study.iitm.ac.in"
+
+RATE_LIMIT = 12
 WINDOW_SECONDS = 10
+
+ALLOWED_ORIGINS = [
+    "https://app-2wr2p2.example.com"
+]
+
+client_buckets = defaultdict(deque)
 
 # ==========================
 # CORS
@@ -18,137 +24,78 @@ WINDOW_SECONDS = 10
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["Retry-After"]
 )
 
 # ==========================
-# STORAGE
+# REQUEST CONTEXT MIDDLEWARE
 # ==========================
 
-idempotency_store = {}
-client_buckets = defaultdict(deque)
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+
+    request_id = request.headers.get(
+        "X-Request-ID",
+        str(uuid.uuid4())
+    )
+
+    request.state.request_id = request_id
+
+    response = await call_next(request)
+
+    response.headers["X-Request-ID"] = request_id
+
+    return response
 
 # ==========================
-# RATE LIMITING
+# RATE LIMIT MIDDLEWARE
 # ==========================
 
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
 
-    # Allow browser preflight requests
     if request.method == "OPTIONS":
         return await call_next(request)
 
-    # Only rate limit /orders endpoints
-    if request.url.path.startswith("/orders"):
+    client_id = request.headers.get("X-Client-Id")
 
-        client_id = request.headers.get("X-Client-Id")
+    if client_id:
 
-        if client_id:
-            now = time.time()
-            bucket = client_buckets[client_id]
+        now = time.time()
+        bucket = client_buckets[client_id]
 
-            while bucket and now - bucket[0] > WINDOW_SECONDS:
-                bucket.popleft()
+        while bucket and now - bucket[0] > WINDOW_SECONDS:
+            bucket.popleft()
 
-            if len(bucket) >= RATE_LIMIT:
-                retry_after = max(
-                    1,
-                    int(WINDOW_SECONDS - (now - bucket[0]))
-                )
+        if len(bucket) >= RATE_LIMIT:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded"}
+            )
 
-                return JSONResponse(
-                    status_code=429,
-                    content={"detail": "Rate limit exceeded"},
-                    headers={"Retry-After": str(retry_after)}
-                )
-
-            bucket.append(now)
+        bucket.append(now)
 
     return await call_next(request)
-
-# ==========================
-# ROOT
-# ==========================
-
-@app.get("/")
-def home():
-    return {"status": "ok"}
 
 # ==========================
 # PRE-FLIGHT
 # ==========================
 
-@app.options("/orders")
-async def options_orders():
+@app.options("/ping")
+async def ping_options():
     return {"ok": True}
 
 # ==========================
-# IDEMPOTENT ORDER CREATION
+# PING
 # ==========================
 
-@app.post("/orders", status_code=201)
-def create_order(
-    idempotency_key: Optional[str] = Header(
-        None,
-        alias="Idempotency-Key"
-    )
-):
-
-    if not idempotency_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing Idempotency-Key"
-        )
-
-    if idempotency_key in idempotency_store:
-        return idempotency_store[idempotency_key]
-
-    order = {
-        "id": str(uuid.uuid4())
-    }
-
-    idempotency_store[idempotency_key] = order
-
-    return order
-
-# ==========================
-# CURSOR PAGINATION
-# ==========================
-
-@app.get("/orders")
-def list_orders(
-    limit: int = 10,
-    cursor: Optional[str] = None
-):
-
-    try:
-        start = int(cursor) if cursor else 1
-    except ValueError:
-        start = 1
-
-    if start < 1:
-        start = 1
-
-    end = min(start + limit - 1, TOTAL_ORDERS)
-
-    items = [{"id": i} for i in range(start, end + 1)]
-
-    next_cursor = (
-        str(end + 1)
-        if end < TOTAL_ORDERS
-        else None
-    )
+@app.get("/ping")
+async def ping(request: Request):
 
     return {
-        "items": items,
-        "next_cursor": next_cursor
+        "email": EMAIL,
+        "request_id": request.state.request_id
     }
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
