@@ -12,7 +12,10 @@ EMAIL = "23f3000872@ds.study.iitm.ac.in"
 RATE_LIMIT = 12
 WINDOW_SECONDS = 10
 
-# Allow assigned origin + common grader origins
+# =====================================
+# CORS
+# =====================================
+
 ALLOWED_ORIGINS = [
     "https://app-2wr2p2.example.com",
     "https://exam.sanand.workers.dev",
@@ -27,19 +30,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# =====================================
+# RATE LIMIT STORAGE
+# =====================================
+
 client_buckets = defaultdict(deque)
 
-# ==========================
-# Request Context Middleware
-# ==========================
+# =====================================
+# REQUEST CONTEXT MIDDLEWARE
+# =====================================
 
 @app.middleware("http")
 async def request_context(request: Request, call_next):
 
-    request_id = request.headers.get(
-        "X-Request-ID",
-        str(uuid.uuid4())
-    )
+    request_id = request.headers.get("x-request-id")
+
+    if not request_id:
+        request_id = str(uuid.uuid4())
 
     request.state.request_id = request_id
 
@@ -49,9 +56,9 @@ async def request_context(request: Request, call_next):
 
     return response
 
-# ==========================
-# Rate Limiter Middleware
-# ==========================
+# =====================================
+# RATE LIMIT MIDDLEWARE
+# =====================================
 
 @app.middleware("http")
 async def rate_limiter(request: Request, call_next):
@@ -79,25 +86,35 @@ async def rate_limiter(request: Request, call_next):
 
     return await call_next(request)
 
-# ==========================
-# Preflight
-# ==========================
+# =====================================
+# OPTIONS /ping
+# =====================================
 
 @app.options("/ping")
-async def options_ping():
+async def ping_options():
     return {"ok": True}
 
-# ==========================
-# Endpoint
-# ==========================
+# =====================================
+# GET /ping
+# =====================================
 
 @app.get("/ping")
 async def ping(request: Request):
 
-    return {
-        "email": EMAIL,
-        "request_id": request.state.request_id
-    }
+    response = JSONResponse(
+        content={
+            "email": EMAIL,
+            "request_id": request.state.request_id
+        }
+    )
+
+    response.headers["X-Request-ID"] = request.state.request_id
+
+    return response
+
+# =====================================
+# ROOT
+# =====================================
 
 @app.get("/")
 async def root():
