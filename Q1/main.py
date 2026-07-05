@@ -12,9 +12,9 @@ TOTAL_ORDERS = 51
 RATE_LIMIT = 19
 WINDOW_SECONDS = 10
 
-# ==========================
+# =====================================
 # CORS
-# ==========================
+# =====================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,16 +25,16 @@ app.add_middleware(
     expose_headers=["Retry-After"]
 )
 
-# ==========================
+# =====================================
 # STORAGE
-# ==========================
+# =====================================
 
 idempotency_store = {}
 client_buckets = defaultdict(deque)
 
-# ==========================
+# =====================================
 # RATE LIMITING
-# ==========================
+# =====================================
 
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
@@ -44,9 +44,11 @@ async def rate_limit(request: Request, call_next):
 
     if request.url.path.startswith("/orders"):
 
+        # ONLY rate limit when X-Client-Id exists
         client_id = request.headers.get("X-Client-Id")
 
         if client_id:
+
             now = time.time()
             bucket = client_buckets[client_id]
 
@@ -70,25 +72,25 @@ async def rate_limit(request: Request, call_next):
 
     return await call_next(request)
 
-# ==========================
+# =====================================
 # ROOT
-# ==========================
+# =====================================
 
 @app.get("/")
 def home():
     return {"status": "ok"}
 
-# ==========================
+# =====================================
 # OPTIONS /orders
-# ==========================
+# =====================================
 
 @app.options("/orders")
 async def options_orders():
-    return {"ok": True}
+    return JSONResponse(content={"ok": True})
 
-# ==========================
+# =====================================
 # IDEMPOTENT ORDER CREATION
-# ==========================
+# =====================================
 
 @app.post("/orders", status_code=201)
 def create_order(
@@ -115,9 +117,9 @@ def create_order(
 
     return order
 
-# ==========================
+# =====================================
 # CURSOR PAGINATION
-# ==========================
+# =====================================
 
 @app.get("/orders")
 def list_orders(
